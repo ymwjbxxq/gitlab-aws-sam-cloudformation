@@ -1,0 +1,210 @@
+image: myCustomIMage
+
+variables:
+  PROD_ACCOUNT: "xxxxx"
+  STAGING_ACCOUNT: "xxxxxx"
+  DEV_ACCOUNT: "xxxxx"
+  ROLE_NAME: "aws_rolee"
+  AWS_REGION: eu-central-1
+
+.test_variables: &test_variables
+  STAGE: test
+  REGION: ${AWS_REGION}
+  AWS_ROLE: "arn:aws:iam::${DEV_ACCOUNT}:role/${ROLE_NAME}"
+  CI_BUCKET: "my-service-deployment-test"
+  DOMAIN: "my-custom-domain.com"
+  CERT_ID: "xxxxxx" #it is the final part of the arn of certifcate manager arn:aws:acm:region:accountId:certificate/xxxxxx
+
+.stage_variables: &stage_variables
+  STAGE: stage
+  REGION: ${AWS_REGION}
+  AWS_ROLE: "arn:aws:iam::${DEV_ACCOUNT}:role/${ROLE_NAME}"
+  CI_BUCKET: "my-service-deployment-test"
+  DOMAIN: "my-custom-domain.com"
+  CERT_ID: "xxxxxx" #it is the final part of the arn of certifcate manager arn:aws:acm:region:accountId:certificate/xxxxxx
+
+.prod_variables: &prod_variables
+  STAGE: prod
+  REGION: ${AWS_REGION}
+  AWS_ROLE: "arn:aws:iam::${DEV_ACCOUNT}:role/${ROLE_NAME}"
+  CI_BUCKET: "my-service-deployment-test"
+  DOMAIN: "my-custom-domain.com"
+  CERT_ID: "xxxxxx" #it is the final part of the arn of certifcate manager arn:aws:acm:region:accountId:certificate/xxxxxx
+
+stages:
+  - prepare:awsSkeleton
+  - deploy:api
+  - deploy:lambda
+
+.prepare-awsSkeleton: &awsSkeleton
+  stage: prepare:awsSkeleton
+  before_script:
+    # Install dependencies
+    - apk add --update python3 py3-pip
+    - pip install --upgrade pip
+    - pip install awscli --upgrade
+    - pip install aws-sam-cli --upgrade
+  script:    
+    # Switch to proper AWS role 
+    - . assume-role ${AWS_ROLE} 
+    - cd aws-skeleton
+    # Setup the cf deployment bucket
+    - aws cloudformation deploy --template base-template.yml
+                                --stack-name my-service-deployment-cf-${STAGE}
+                                --parameter-overrides awsAdminRole=${AWS_ROLE} stage=${STAGE}
+                                --force-upload
+                                --no-fail-on-empty-changeset
+    # Setup the deployment bucket
+    - sam build
+    - sam package --template-file template.yml 
+                  --output-template-file packaged.yml 
+                  --s3-bucket my-service-cf-deployment-${STAGE}
+                  --force-upload
+                  --debug
+    - sam deploy --template-file template.yml 
+                 --stack-name my-service-skeleton 
+                 --s3-bucket my-service-cf-deployment-${STAGE}
+                 --capabilities CAPABILITY_NAMED_IAM 
+                 --region ${AWS_REGION} 
+                 --parameter-overrides awsAdminRole=${AWS_ROLE} stage=${STAGE}
+                 --force-upload
+                 --no-fail-on-empty-changeset
+                 --debug
+
+prepare:awsSkeleton:test:
+  <<: *awsSkeleton
+  variables:
+    <<: *test_variables
+  environment:
+    name: test
+  when: manual
+
+prepare:awsSkeleton:stage:
+  <<: *awsSkeleton
+  variables:
+    <<: *stage_variables
+  environment:
+    name: stage
+  when: manual
+
+prepare:awsSkeleton:prod:
+  <<: *awsSkeleton
+  variables:
+    <<: *prod_variables
+  environment:
+    name: prod
+  variables:
+    DEPLOYMENT_LABEL: awsSkeleton
+  when: manual
+
+.deploy-api: &deploy-api
+  stage: deploy:api
+  before_script:
+    # Install dependencies
+    - apk add --update python3 py3-pip
+    - pip install --upgrade pip
+    - pip install awscli --upgrade
+    - pip install aws-sam-cli --upgrade
+  script:
+    # Switch to proper AWS role 
+    - . assume-role ${AWS_ROLE} 
+    # Compile for api-gateways folder
+    - cd api-gateways/lambda1
+    - npm install
+    - npm run deploy
+    # Deploy API
+    - sam package --template-file template.yml 
+                  --output-template-file my-service-api-${STAGE}.yml 
+                  --s3-bucket my-service-deployment-${STAGE}
+                  --region ${AWS_REGION} 
+                  --force-upload
+                  --debug
+    - sam deploy --template-file template.yml 
+                 --stack-name my-service-api-${STAGE}
+                 --s3-bucket my-service-deployment-${STAGE}
+                 --capabilities CAPABILITY_NAMED_IAM 
+                 --region ${AWS_REGION} 
+                 --parameter-overrides stage=${STAGE} domain=${DOMAIN} certId=${CERT_ID}
+                 --force-upload
+                 --no-fail-on-empty-changeset
+                 --debug
+
+deploy:feedback:test:
+  <<: *deploy-api
+  variables:
+    <<: *test_variables
+  environment:
+    name: test
+  when: manual
+
+deploy:feedback:stage:
+  <<: *deploy-api
+  variables:
+    <<: *stage_variables
+  environment:
+    name: stage
+  when: manual
+
+deploy:feedback:prod:
+  <<: *deploy-api
+  variables:
+    <<: *prod_variables
+  environment:
+    name: prod
+  when: manual
+
+.deploy-lambda: &deploy-lambda
+  stage: deploy:lambda
+  before_script:
+    # Install dependencies
+    - apk add --update python3 py3-pip
+    - pip install --upgrade pip
+    - pip install awscli --upgrade
+    - pip install aws-sam-cli --upgrade
+  script:
+    # Switch to proper AWS role 
+    - . assume-role $AWS_ROLE
+    # Compile for lambas folder
+    - cd lambdas/
+    # Deploy lambdas
+    - cd lambda1/
+    # Deploy API
+    - sam package --template-file template.yml 
+                  --output-template-file my-service-lambda-${STAGE}.yml 
+                  --s3-bucket my-service-deployment-${STAGE}
+                  --region ${AWS_REGION} 
+                  --force-upload
+                  --debug
+    - sam deploy --template-file template.yml 
+                 --stack-name my-service-lambda-${STAGE}
+                 --s3-bucket my-service-deployment-${STAGE}
+                 --capabilities CAPABILITY_NAMED_IAM 
+                 --region ${AWS_REGION} 
+                 --parameter-overrides stage=${STAGE}
+                 --force-upload
+                 --no-fail-on-empty-changeset
+                 --debug
+      
+deploy:lambda:test:
+  <<: *deploy-lambda
+  variables:
+    <<: *test_variables
+  environment:
+    name: test
+  when: manual
+
+deploy:lambda:stage:
+  <<: *deploy-lambda
+  variables:
+    <<: *stage_variables
+  environment:
+    name: stage
+  when: manual
+
+deploy:lambda:prod:
+  <<: *deploy-lambda
+  variables:
+    <<: *prod_variables
+  environment:
+    name: prod
+  when: manual
