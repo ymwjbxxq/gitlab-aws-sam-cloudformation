@@ -1,0 +1,83 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: 'MyService skeleton'
+
+Parameters:
+  awsAdminRole:
+    Type: String
+    Default: ${opt:awsAdminRole}
+  stage:
+    Type: String
+    Default: ${opt:stage}
+
+Resources:
+  MyServiceDeploymentBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Sub "my-service-deployment-${stage}"
+      Tags:
+        - Key: Name
+          Value: !Sub "my-service-deployment-${stage}"
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins:
+              - '*'
+            AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - GET
+              - POST
+            MaxAge: 3000
+  
+  MyServiceBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    DependsOn: MyServiceDeploymentBucket
+    Properties:
+      Bucket:
+        Ref: MyServiceDeploymentBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ADMIN
+            Effect: Allow
+            Action: 's3:*'
+            Principal:
+              AWS:
+                - Ref: awsAdminRole
+            Resource:
+              'Fn::Join':
+                - ''
+                - - 'arn:aws:s3:::'
+                  - Ref: MyServiceDeploymentBucket
+  
+  CloudWatchRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub "api-gw-cloudwatch-log-role-${stage}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - >-
+          arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+  
+  ApiGwAccount:
+    Type: 'AWS::ApiGateway::Account'
+    Properties:
+      CloudWatchRoleArn:
+        'Fn::GetAtt':
+          - CloudWatchRole
+          - Arn
+
+Outputs:
+  MyServiceDeploymentBucket:
+    Value:
+      Ref: MyServiceDeploymentBucket
+    Export:
+      Name: !Sub "my-service-deployment-${stage}"
