@@ -1,0 +1,51 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: 'MyService skeleton deployment'
+
+Parameters:
+  awsAdminRole:
+    Type: String
+    Default: ${opt:awsAdminRole}
+  stage:
+    Type: String
+    Default: ${opt:stage}
+
+Resources:
+  MyServiceDeploymentBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Sub "my-service-cf-deployment-${stage}"
+      Tags:
+        - Key: Name
+          Value: !Sub "my-service-cf-deployment-${stage}"
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins:
+              - '*'
+            AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - GET
+              - POST
+            MaxAge: 3000
+  
+  MyServiceBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    DependsOn: MyServiceDeploymentBucket
+    Properties:
+      Bucket:
+        Ref: MyServiceDeploymentBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ADMIN
+            Effect: Allow
+            Action: 's3:*'
+            Principal:
+              AWS:
+                - Ref: awsAdminRole
+            Resource:
+              'Fn::Join':
+                - ''
+                - - 'arn:aws:s3:::'
+                  - Ref: MyServiceDeploymentBucket
