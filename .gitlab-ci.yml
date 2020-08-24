@@ -4,7 +4,7 @@ variables:
   PROD_ACCOUNT: "xxxxx"
   STAGING_ACCOUNT: "xxxxxx"
   DEV_ACCOUNT: "xxxxx"
-  ROLE_NAME: "aws_rolee"
+  ROLE_NAME: "aws_role"
   AWS_REGION: eu-central-1
 
 .test_variables: &test_variables
@@ -12,23 +12,23 @@ variables:
   REGION: ${AWS_REGION}
   AWS_ROLE: "arn:aws:iam::${DEV_ACCOUNT}:role/${ROLE_NAME}"
   CI_BUCKET: "my-service-deployment-test"
-  DOMAIN: "my-custom-domain.com"
+  DOMAIN: "my-custom-test-domain.com"
   CERT_ID: "xxxxxx" #it is the final part of the arn of certifcate manager arn:aws:acm:region:accountId:certificate/xxxxxx
 
 .stage_variables: &stage_variables
   STAGE: stage
   REGION: ${AWS_REGION}
-  AWS_ROLE: "arn:aws:iam::${DEV_ACCOUNT}:role/${ROLE_NAME}"
-  CI_BUCKET: "my-service-deployment-test"
-  DOMAIN: "my-custom-domain.com"
+  AWS_ROLE: "arn:aws:iam::${STAGING_ACCOUNT}:role/${ROLE_NAME}"
+  CI_BUCKET: "my-service-deployment-stage"
+  DOMAIN: "my-custom-test-domain.com"
   CERT_ID: "xxxxxx" #it is the final part of the arn of certifcate manager arn:aws:acm:region:accountId:certificate/xxxxxx
 
 .prod_variables: &prod_variables
   STAGE: prod
   REGION: ${AWS_REGION}
-  AWS_ROLE: "arn:aws:iam::${DEV_ACCOUNT}:role/${ROLE_NAME}"
-  CI_BUCKET: "my-service-deployment-test"
-  DOMAIN: "my-custom-domain.com"
+  AWS_ROLE: "arn:aws:iam::${PROD_ACCOUNT}:role/${ROLE_NAME}"
+  CI_BUCKET: "my-service-deployment-prod"
+  DOMAIN: "my-custom-prod-domain.com"
   CERT_ID: "xxxxxx" #it is the final part of the arn of certifcate manager arn:aws:acm:region:accountId:certificate/xxxxxx
 
 stages:
@@ -109,7 +109,7 @@ prepare:awsSkeleton:prod:
     # Switch to proper AWS role 
     - . assume-role ${AWS_ROLE} 
     # Compile for api-gateways folder
-    - cd api-gateways/lambda1
+    - cd api-gateways/myApi
     - npm install
     - npm run deploy
     # Deploy API
@@ -167,7 +167,7 @@ deploy:feedback:prod:
     # Compile for lambas folder
     - cd lambdas/
     # Deploy lambdas
-    - cd lambda1/
+    - cd func1/
     # Deploy API
     - sam package --template-file template.yml 
                   --output-template-file my-service-lambda-${STAGE}.yml 
