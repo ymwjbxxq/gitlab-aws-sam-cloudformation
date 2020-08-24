@@ -1,0 +1,124 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: 'MyFunc1 lambda'
+
+Parameters:
+  awsAdminRole:
+    Type: String
+    Default: ${opt:awsAdminRole}
+  stage:
+    Type: String
+    Default: ${opt:stage}
+  dmsAccount:
+    Type: String
+    Default: ${opt:dmsAccount}
+
+Globals:
+  Function:
+    Runtime: nodejs12.x
+
+Resources:
+  Func1:
+    Type: AWS::Serverless::Function 
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-func1"
+      Handler: func1.handler
+      CodeUri: resources/func1.zip
+      MemorySize: 1024
+      Timeout: 30
+      Policies:
+        - AWSLambdaBasicExecutionRole # Managed Policy
+        - Version: '2012-10-17' # Policy Document
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'sqs:ReceiveMessage'
+                - 'sqs:DeleteMessage'
+              Resource:
+                - !GetAtt 
+                  - Func1SQS
+                  - Arn
+            - Effect: Allow
+              Action:
+                - 'dynamodb:Query'
+                - 'dynamodb:GetItem'
+              Resource:
+                - '*'
+      Tags:
+        Environment: !Sub "${stage}"
+        Name: func1
+      Environment:
+        Variables:
+          AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+          func1Topic: !Sub "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${AWS::StackName}-sns-func1-topic"
+          sqsUrl: !Sub "https://sqs.${AWS::Region}.amazonaws.com/${AWS::AccountId}/${AWS::StackName}-func1-sqs"
+      Events:
+        SqsJobQueue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt Func1SQS.Arn
+            BatchSize: 10
+
+  Func1SQS:
+    Type: 'AWS::SQS::Queue'
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-func1-sqs"
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-func1-sqs"
+      VisibilityTimeout: 180
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt 
+          - Func1DeadSQS
+          - Arn
+        maxReceiveCount: 2
+
+  Func1SQSPolicy:
+    Type: 'AWS::SQS::QueuePolicy'
+    Properties:
+      Queues:
+        - !Ref Func1SQS
+      PolicyDocument:
+        Version: 2012-10-17
+        Id: Func1SQSPolicy
+        Statement:
+          - Sid: ADMIN
+            Effect: Allow
+            Principal: "*"
+            Resource:
+              Fn::GetAtt: 
+                - Func1SQS
+                - Arn
+            Action:
+              - 'sqs:SendMessage'
+              - 'sqs:ReceiveMessage'
+          - Sid: AllowMyServiceSNS
+            Effect: Allow
+            Principal: "*"
+            Resource:
+              Fn::GetAtt:
+                - Func1SQS
+                - Arn
+            Action:
+              - sqs:SendMessage
+            Condition:
+              ArnEquals:
+                "aws:SourceArn": !Sub "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:my-service-api-${stage}-sns-topic"
+
+  Func1DeadSQS:
+    Type: 'AWS::SQS::Queue'
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-dead-func1-sqs"
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-dead-func1-sqs"
+  
+  FeedbackToFunc1Subscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: sqs
+      Endpoint:
+        Fn::GetAtt:
+          - Func1SQS
+          - Arn
+      TopicArn: !Sub "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:my-service-api-${stage}-sns-topic"
