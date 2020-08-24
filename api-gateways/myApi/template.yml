@@ -1,0 +1,270 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: 'MyService api'
+
+Parameters:
+  stage:
+    Type: String
+    Default: ${opt:stage}
+  domain:
+    Type: String
+    Default: ${opt:domain}
+  certId:
+    Type: String
+    Default: ${opt:certId}
+
+Globals:
+  Function:
+    Runtime: nodejs12.x
+
+Resources:
+  MyServiceSnsTopic:
+    Type: 'AWS::SNS::Topic'
+    Properties:
+      TopicName: !Sub "${AWS::StackName}-sns-myservice-topic" 
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-sns-myservice-topic" 
+      Subscription:
+        - Endpoint: !GetAtt 
+            - MyServiceQueue
+            - Arn
+          Protocol: SQS
+  
+  MyServiceQueue:
+    Type: 'AWS::SQS::Queue'
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-input-queue"
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-input-queue"
+      VisibilityTimeout: 180
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt 
+          - MyServiceDeadQueue
+          - Arn
+        maxReceiveCount: 2
+  
+  MyServiceSqsPolicy:
+    Type: 'AWS::SQS::QueuePolicy'
+    Properties:
+      Queues:
+        - !Ref MyServiceQueue
+      PolicyDocument:
+        Version: 2012-10-17
+        Id: MyServiceSqsPolicy
+        Statement:
+          - Sid: SNS
+            Effect: Allow
+            Principal: '*'
+            Resource: !GetAtt 
+              - MyServiceQueue
+              - Arn
+            Action:
+              - 'sqs:SendMessage'
+            Condition:
+              ArnEquals:
+                'aws:SourceArn': !Ref MyServiceSnsTopic
+  
+  MyServiceDeadQueue:
+    Type: 'AWS::SQS::Queue'
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-dead-input-queue"
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-dead-input-queue"
+
+  MyServiceFunction:
+    Type: AWS::Serverless::Function 
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-worker"
+      Handler: myservice.handler
+      CodeUri: resources/myservice.zip
+      MemorySize: 1024
+      Timeout: 29
+      Policies:
+        - AWSLambdaBasicExecutionRole # Managed Policy
+        - Version: '2012-10-17' # Policy Document
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'sqs:ReceiveMessage'
+                - 'sqs:DeleteMessage'
+              Resource:
+                - !GetAtt 
+                  - MyServiceQueue
+                  - Arn
+            - Effect: Allow
+              Action:
+                - 'dynamodb:Query'
+                - 'dynamodb:UpdateItem'
+              Resource:
+                - '*'
+      Tags:
+        Environment: !Sub "${stage}"
+        Name: myservice-worker
+      Environment:
+        Variables:
+          AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+      Events:
+        SqsJobQueue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt MyServiceQueue.Arn
+            BatchSize: 10
+
+  CustomDomainName:
+    Type: 'AWS::ApiGateway::DomainName'
+    Properties:
+      RegionalCertificateArn: !Sub "arn:aws:acm:${AWS::Region}:${AWS::AccountId}:certificate/${certId}"
+      DomainName: !Ref domain
+      Tags:
+        - Key: Name
+          Value: !Sub "customDomain-${stage}" 
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  FeedbacApiGroup:
+    Type: AWS::Logs::LogGroup
+
+  ApiGatewayRestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub "${stage}-myservice-api" 
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Policy: ''
+
+  ApiGatewayResourceV1:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      ParentId: !GetAtt 
+        - ApiGatewayRestApi
+        - RootResourceId
+      PathPart: v1
+      RestApiId: !Ref ApiGatewayRestApi
+  
+  ApiGatewayResourceV1MyService:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      ParentId: !Ref ApiGatewayResourceV1
+      PathPart: myservice
+      RestApiId: !Ref ApiGatewayRestApi
+  
+  GatewayRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - apigateway.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Policies:
+        - PolicyName: GatewayRolePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - sns:Publish
+              Resource:
+                - !Sub 
+                  - 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${topicName}'
+                  - topicName: ${AWS::StackName}-sns-myservice-topic
+            - Effect: Allow
+              Action:
+                - logs:PutLogEvents
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+              Resource: "*"
+
+  ApiGatewayPOSTMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      ResourceId: !Ref ApiGatewayResourceV1MyService
+      RestApiId: !Ref ApiGatewayRestApi
+      HttpMethod: POST
+      MethodResponses:
+        - StatusCode: 200
+      RequestParameters: #request parameters need to be defined for the mapping
+        method.request.querystring.message: false #payload of the SNS message
+        method.request.querystring.subject: false #subject of the SNS message
+        method.request.querystring.topic: false #destination topic arn
+      Integration:
+        Type: AWS
+        Credentials:
+          Fn::GetAtt: [ GatewayRole, Arn ] #use the already defined role
+        Uri:  #required URI for using SNS service
+          Fn::Join:
+            - ""
+            - - "arn:aws:apigateway:"
+              - Ref: AWS::Region
+              - ":sns:action/Publish"
+        IntegrationHttpMethod: POST #SNS allows POST operations
+        RequestParameters: #parameter mapping defined by the AWS API.
+          integration.request.querystring.TopicArn: "method.request.querystring.topic"
+          integration.request.querystring.Subject: "method.request.querystring.subject"
+          integration.request.querystring.Message: "method.request.querystring.message"
+        IntegrationResponses: #map all responses to a default response.
+          - StatusCode: 200
+            ResponseTemplates: #default response
+              application/json: '{"status":"OK"}'
+
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ApiGatewayPOSTMethod
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      StageName: !Sub "${stage}" 
+
+  MyUsagePlan:
+    Type: "AWS::ApiGateway::UsagePlan"
+    DependsOn:
+      - ApiGatewayDeployment
+    Properties:
+      ApiStages:
+        - ApiId: !Ref ApiGatewayRestApi
+          Stage: !Sub "${stage}" 
+      Description: My Usage plan for API
+      UsagePlanName: first-usage-plan
+      Quota:
+        Limit: 2000
+        Period: DAY
+      Throttle:
+        BurstLimit: 100
+        RateLimit: 500
+      Tags: 
+        - Key: Name
+          Value: !Sub "MyApiUsagePlan-${stage}"
+
+  CustomBasePathMapping:
+    Type: 'AWS::ApiGateway::BasePathMapping'
+    DependsOn:
+      - ApiGatewayDeployment
+    Properties:
+      BasePath: "myservice-service"
+      DomainName: !Ref CustomDomainName
+      RestApiId: !Ref ApiGatewayRestApi
+      Stage: !Sub "${stage}"
+
+Outputs:
+  MyServiceSnsTopic:
+    Value: !Ref MyServiceSnsTopic
+  MyServiceQueueUrl:
+    Value: !Ref "MyServiceQueue"
+  MyServiceQueueARN:
+    Value: !GetAtt MyServiceQueue.Arn
+  MyServiceQueueName: 
+    Value: !GetAtt MyServiceQueue.QueueName
+  MyServiceApi:
+    Description: "API Gateway endpoint URL for MyService Api"
+    Value: !Sub "https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com"
