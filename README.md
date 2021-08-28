@@ -2,7 +2,7 @@
 
 Previously I posted a serverless file to build this.
 
-![picture](https://bitbucket.org/DanBranch/api-sns-sqs-lambda/downloads/diagram.png)
+![picture](https://github.com/ymwjbxxq/gitlab-aws-sam-cloudformation/blob/master/diagram.png)
 
 Today I will share a bit more code to let you understand the structure of the solution and how I migrated from serverless framework to AWS SAM/CloudFormation with all my open points.
 
@@ -14,13 +14,13 @@ Because often I am blocked for some plugin limitation or bugs, and so on, I want
 
 The structure of the project is straightforward.
 
-![picture](https://bitbucket.org/DanBranch/gitlab-aws-sam-cloudformation/downloads/Structure.png)
+![picture](https://github.com/ymwjbxxq/gitlab-aws-sam-cloudformation/blob/master/Structure.png)
 
 In the root, you have the ci configuration, in this case, GitLab.
 
 The **skeleton** folder is where I like to group the resources for the overall service like security groups, the deployment bucket etc
 I have two files in this example, and I am sure that I did something wrong, but please stay with me.
-If you are using a serverless framework like in this [example](https://bitbucket.org/DanBranch/api-sns-sqs-lambda/src/master/), you will know that you will end up with 1 CloudFormation stack with two buckets:
+If you are using a serverless framework like in this [example](https://github.com/ymwjbxxq/aws-api-sns-sqs-lambda), you will know that you will end up with 1 CloudFormation stack with two buckets:
 
 *  Random generated that contain the template of the “deployment bucket”
 *  Deployment bucket that you will reference all around
